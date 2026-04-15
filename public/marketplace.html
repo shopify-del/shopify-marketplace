@@ -179,9 +179,8 @@
 </div>
 
 <script>
-  const params = new URLSearchParams(window.location.search);
-  const customerId = params.get('logged_in_customer_id');
-  const proxyBase = '/apps/marketplace';
+  const customerId = window.SHOPIFY_CUSTOMER_ID || '';
+const proxyBase = '/apps/marketplace';
   let condition = 'god';
 
   if (!customerId) {
