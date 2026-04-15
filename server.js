@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const fetch = require('node-fetch');
 const multer = require('multer');
 const path = require('path');
+const fs = require('fs');
 
 const app = express();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -12,14 +13,7 @@ app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-const {
-  SHOPIFY_CLIENT_ID,
-  SHOPIFY_CLIENT_SECRET,
-  SHOPIFY_STORE_DOMAIN,
-  ADMIN_PASSWORD,
-  PORT = 3000
-} = process.env;
-
+const { SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, SHOPIFY_STORE_DOMAIN, ADMIN_PASSWORD, PORT = 3000 } = process.env;
 const SHOPIFY_API_SECRET = SHOPIFY_CLIENT_SECRET;
 const SHOPIFY_API_VERSION = '2024-01';
 const COLLECTION_TITLE = 'Brugt & Genbrugt';
@@ -30,17 +24,11 @@ let tokenExpiresAt = 0;
 async function getAccessToken() {
   const now = Date.now();
   if (cachedToken && now < tokenExpiresAt - 60000) return cachedToken;
-
   const res = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/oauth/access_token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: SHOPIFY_CLIENT_ID,
-      client_secret: SHOPIFY_CLIENT_SECRET
-    })
+    body: new URLSearchParams({ grant_type: 'client_credentials', client_id: SHOPIFY_CLIENT_ID, client_secret: SHOPIFY_CLIENT_SECRET })
   });
-
   if (!res.ok) throw new Error(`Token fejl: ${res.status} — ${await res.text()}`);
   const data = await res.json();
   cachedToken = data.access_token;
@@ -68,29 +56,14 @@ async function shopifyREST(endpoint, method = 'GET', body = null) {
   return res.json();
 }
 
-function verifyProxySignature(query) {
-  const { signature, ...rest } = query;
-  if (!signature) return false;
-  const sorted = Object.keys(rest).sort().map(k => `${k}=${Array.isArray(rest[k]) ? rest[k].join(',') : rest[k]}`).join('');
-  const hash = crypto.createHmac('sha256', SHOPIFY_API_SECRET).update(sorted).digest('hex');
-  return hash === signature;
-}
-
 let cachedCollectionId = null;
 
 async function getOrCreateCollection() {
   if (cachedCollectionId) return cachedCollectionId;
   const data = await shopifyREST('/custom_collections.json?title=Brugt+%26+Genbrugt');
-  if (data.custom_collections?.length > 0) {
-    cachedCollectionId = data.custom_collections[0].id;
-    return cachedCollectionId;
-  }
+  if (data.custom_collections?.length > 0) { cachedCollectionId = data.custom_collections[0].id; return cachedCollectionId; }
   const created = await shopifyREST('/custom_collections.json', 'POST', {
-    custom_collection: {
-      title: COLLECTION_TITLE,
-      body_html: '<p>Køb og sælg brugt babytøj og -udstyr direkte fra andre forældre.</p>',
-      published: true
-    }
+    custom_collection: { title: COLLECTION_TITLE, body_html: '<p>Køb og sælg brugt babytøj og -udstyr direkte fra andre forældre.</p>', published: true }
   });
   cachedCollectionId = created.custom_collection.id;
   return cachedCollectionId;
@@ -107,31 +80,34 @@ async function attachImageToProduct(productId, base64Data, filename) {
   });
 }
 
-// ─── KUNDE ROUTES ────────────────────────────────────────────────────────────
+// ─── KUNDE ROUTES ─────────────────────────────────────────────────────────────
 
 app.get(['/', '/apps/marketplace', '/apps/marketplace/'], (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'marketplace.html'));
+  const customerId = req.query.logged_in_customer_id || '';
+  const customerEmail = req.query.customer_email || '';
+  const shop = req.query.shop || SHOPIFY_STORE_DOMAIN;
+
+  let html = fs.readFileSync(path.join(__dirname, 'public', 'marketplace.html'), 'utf8');
+  const inject = `<script>window.SHOPIFY_CUSTOMER_ID=${JSON.stringify(customerId)};window.SHOPIFY_CUSTOMER_EMAIL=${JSON.stringify(customerEmail)};window.SHOPIFY_SHOP=${JSON.stringify(shop)};</script>`;
+  html = html.replace('</head>', inject + '</head>');
+  res.setHeader('Content-Type', 'text/html');
+  res.send(html);
 });
 
 app.get(['/api/mine', '/apps/marketplace/api/mine'], async (req, res) => {
   const customerId = req.query.logged_in_customer_id;
   if (!customerId) return res.json({ listings: [] });
-
   const data = await shopifyAdmin(`
     query GetCustomerListings($query: String!) {
       products(first: 50, query: $query) {
-        edges {
-          node {
-            id title status descriptionHtml createdAt
-            images(first: 1) { edges { node { url } } }
-            variants(first: 1) { edges { node { price } } }
-            metafield(namespace: "marketplace", key: "seller_id") { value }
-          }
-        }
+        edges { node {
+          id title status descriptionHtml createdAt
+          images(first: 1) { edges { node { url } } }
+          variants(first: 1) { edges { node { price } } }
+        } }
       }
     }
   `, { query: `tag:seller_${customerId}` });
-
   const listings = data.data?.products?.edges?.map(({ node }) => ({
     id: node.id, title: node.title, status: node.status,
     description: node.descriptionHtml,
@@ -139,7 +115,6 @@ app.get(['/api/mine', '/apps/marketplace/api/mine'], async (req, res) => {
     image: node.images?.edges[0]?.node?.url,
     createdAt: node.createdAt
   })) || [];
-
   res.json({ listings });
 });
 
@@ -147,12 +122,9 @@ app.post(['/api/list', '/apps/marketplace/api/list'], upload.array('images', 5),
   const customerId = req.query.logged_in_customer_id;
   const customerEmail = req.query.customer_email || '';
   if (!customerId) return res.status(401).json({ error: 'Du skal være logget ind' });
-
   const { title, description, price, condition, category } = req.body;
   if (!title || !price || !description) return res.status(400).json({ error: 'Udfyld alle felter' });
-
   const conditionLabel = { ny: 'Ny med mærke', god: 'God stand', brugt: 'Let brugt', slidt: 'Slidt' }[condition] || condition;
-
   try {
     const productData = await shopifyREST('/products.json', 'POST', {
       product: {
@@ -169,16 +141,11 @@ app.post(['/api/list', '/apps/marketplace/api/list'], upload.array('images', 5),
         ]
       }
     });
-
     const productId = productData.product?.id;
     if (!productId) throw new Error('Produkt ikke oprettet');
-
     if (req.files?.length) {
-      for (const file of req.files) {
-        await attachImageToProduct(productId, file.buffer.toString('base64'), file.originalname);
-      }
+      for (const file of req.files) await attachImageToProduct(productId, file.buffer.toString('base64'), file.originalname);
     }
-
     res.json({ success: true, message: 'Dit opslag er sendt til godkendelse. Vi vender tilbage snarest!' });
   } catch (err) {
     console.error('Opret produkt fejl:', err);
@@ -196,7 +163,7 @@ app.delete(['/api/listing/:id', '/apps/marketplace/api/listing/:id'], async (req
   res.json({ success: true });
 });
 
-// ─── ADMIN ROUTES ────────────────────────────────────────────────────────────
+// ─── ADMIN ROUTES ─────────────────────────────────────────────────────────────
 
 function adminAuth(req, res, next) {
   const auth = req.headers.authorization;
@@ -206,28 +173,23 @@ function adminAuth(req, res, next) {
   next();
 }
 
-app.get('/admin/marketplace', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
-});
+app.get('/admin/marketplace', (req, res) => res.sendFile(path.join(__dirname, 'public', 'admin.html')));
 
 app.get('/admin/marketplace/api/pending', adminAuth, async (req, res) => {
   const data = await shopifyAdmin(`
     query {
       products(first: 50, query: "tag:marketplace status:draft") {
-        edges {
-          node {
-            id title status descriptionHtml createdAt tags
-            images(first: 3) { edges { node { url } } }
-            variants(first: 1) { edges { node { price } } }
-            sellerEmail: metafield(namespace: "marketplace", key: "seller_email") { value }
-            sellerId: metafield(namespace: "marketplace", key: "seller_id") { value }
-            condition: metafield(namespace: "marketplace", key: "condition") { value }
-          }
-        }
+        edges { node {
+          id title status descriptionHtml createdAt tags
+          images(first: 3) { edges { node { url } } }
+          variants(first: 1) { edges { node { price } } }
+          sellerEmail: metafield(namespace: "marketplace", key: "seller_email") { value }
+          sellerId: metafield(namespace: "marketplace", key: "seller_id") { value }
+          condition: metafield(namespace: "marketplace", key: "condition") { value }
+        } }
       }
     }
   `);
-
   const listings = data.data?.products?.edges?.map(({ node }) => ({
     gid: node.id, id: node.id.replace('gid://shopify/Product/', ''),
     title: node.title, description: node.descriptionHtml,
@@ -236,7 +198,6 @@ app.get('/admin/marketplace/api/pending', adminAuth, async (req, res) => {
     sellerEmail: node.sellerEmail?.value, sellerId: node.sellerId?.value,
     condition: node.condition?.value, createdAt: node.createdAt
   })) || [];
-
   res.json({ listings });
 });
 
@@ -246,18 +207,14 @@ app.post('/admin/marketplace/api/approve/:id', adminAuth, async (req, res) => {
     const collectionId = await getOrCreateCollection();
     await addToCollection(req.params.id, collectionId);
     res.json({ success: true, message: 'Produkt godkendt og publiceret' });
-  } catch (err) {
-    res.status(500).json({ error: 'Godkendelse fejlede' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Godkendelse fejlede' }); }
 });
 
 app.delete('/admin/marketplace/api/reject/:id', adminAuth, async (req, res) => {
   try {
     await shopifyREST(`/products/${req.params.id}.json`, 'DELETE');
     res.json({ success: true, message: 'Opslag afvist og slettet' });
-  } catch (err) {
-    res.status(500).json({ error: 'Afvisning fejlede' });
-  }
+  } catch (err) { res.status(500).json({ error: 'Afvisning fejlede' }); }
 });
 
 app.listen(PORT, () => console.log(`Marketplace server kører på port ${PORT}`));
