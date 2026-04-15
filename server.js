@@ -13,7 +13,7 @@ app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-const { SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, SHOPIFY_STORE_DOMAIN, SHOPIFY_STOREFRONT_TOKEN, ADMIN_PASSWORD, PORT = 3000 } = process.env;
+const { SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, SHOPIFY_STORE_DOMAIN, ADMIN_PASSWORD, PORT = 3000 } = process.env;
 const SHOPIFY_API_SECRET = SHOPIFY_CLIENT_SECRET;
 const SHOPIFY_API_VERSION = '2024-01';
 const COLLECTION_TITLE = 'Brugt & Genbrugt';
@@ -80,84 +80,6 @@ async function attachImageToProduct(productId, base64Data, filename) {
   });
 }
 
-// ─── STOREFRONT API ──────────────────────────────────────────────────────────
-
-async function storefrontQuery(query, variables = {}) {
-  const res = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/api/${SHOPIFY_API_VERSION}/graphql.json`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Shopify-Storefront-Access-Token': SHOPIFY_STOREFRONT_TOKEN
-    },
-    body: JSON.stringify({ query, variables })
-  });
-  return res.json();
-}
-
-async function resolveCustomerFromToken(customerAccessToken) {
-  const { data, errors } = await storefrontQuery(`
-    query ($token: String!) {
-      customer(customerAccessToken: $token) {
-        id
-        email
-        firstName
-        lastName
-      }
-    }
-  `, { token: customerAccessToken });
-  if (errors || !data?.customer) return null;
-  const c = data.customer;
-  return { id: c.id.replace('gid://shopify/Customer/', ''), email: c.email, firstName: c.firstName, lastName: c.lastName };
-}
-
-// ─── AUTH ROUTES ─────────────────────────────────────────────────────────────
-
-app.post(['/api/auth/login', '/apps/marketplace/api/auth/login'], async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Email og adgangskode påkrævet' });
-
-  try {
-    const tokenResult = await storefrontQuery(`
-      mutation ($input: CustomerAccessTokenCreateInput!) {
-        customerAccessTokenCreate(input: $input) {
-          customerAccessToken { accessToken expiresAt }
-          customerUserErrors { message }
-        }
-      }
-    `, { input: { email, password } });
-
-    const tokenData = tokenResult.data?.customerAccessTokenCreate;
-    if (tokenData?.customerUserErrors?.length) {
-      return res.status(401).json({ error: 'Forkert email eller adgangskode' });
-    }
-
-    const accessToken = tokenData?.customerAccessToken?.accessToken;
-    if (!accessToken) return res.status(401).json({ error: 'Login fejlede' });
-
-    const customer = await resolveCustomerFromToken(accessToken);
-    if (!customer) return res.status(401).json({ error: 'Kunne ikke hente kundeoplysninger' });
-
-    res.json({
-      success: true,
-      customerAccessToken: accessToken,
-      customerId: customer.id,
-      email: customer.email,
-      firstName: customer.firstName
-    });
-  } catch (err) {
-    console.error('Login fejl:', err);
-    res.status(500).json({ error: 'Serverfejl ved login' });
-  }
-});
-
-app.get(['/api/auth/verify', '/apps/marketplace/api/auth/verify'], async (req, res) => {
-  const token = req.headers['x-customer-token'];
-  if (!token) return res.status(401).json({ error: 'Ingen token' });
-  const customer = await resolveCustomerFromToken(token);
-  if (!customer) return res.status(401).json({ error: 'Ugyldig eller udløbet token' });
-  res.json({ success: true, customerId: customer.id, email: customer.email, firstName: customer.firstName });
-});
-
 app.get(['/api/vendors', '/apps/marketplace/api/vendors'], async (req, res) => {
   try {
     const data = await shopifyAdmin(`
@@ -179,20 +101,6 @@ app.get(['/api/vendors', '/apps/marketplace/api/vendors'], async (req, res) => {
 
 // ─── KUNDE ROUTES ─────────────────────────────────────────────────────────────
 
-async function resolveCustomer(req) {
-  // 1. Token-based auth (direkte login)
-  const token = req.headers['x-customer-token'];
-  if (token) {
-    const customer = await resolveCustomerFromToken(token);
-    if (customer) return { customerId: customer.id, customerEmail: customer.email };
-  }
-  // 2. App Proxy fallback (Shopify-injected query params)
-  if (req.query.logged_in_customer_id) {
-    return { customerId: req.query.logged_in_customer_id, customerEmail: req.query.customer_email || '' };
-  }
-  return null;
-}
-
 app.get(['/', '/apps/marketplace', '/apps/marketplace/'], (req, res) => {
   const customerId = req.query.logged_in_customer_id || '';
   const customerEmail = req.query.customer_email || '';
@@ -206,8 +114,7 @@ app.get(['/', '/apps/marketplace', '/apps/marketplace/'], (req, res) => {
 });
 
 app.get(['/api/mine', '/apps/marketplace/api/mine'], async (req, res) => {
-  const customer = await resolveCustomer(req);
-  const customerId = customer?.customerId;
+  const customerId = req.query.logged_in_customer_id;
   if (!customerId) return res.json({ listings: [] });
   const data = await shopifyAdmin(`
     query GetCustomerListings($query: String!) {
@@ -231,9 +138,8 @@ app.get(['/api/mine', '/apps/marketplace/api/mine'], async (req, res) => {
 });
 
 app.post(['/api/list', '/apps/marketplace/api/list'], upload.array('images', 5), async (req, res) => {
-  const customer = await resolveCustomer(req);
-  const customerId = customer?.customerId;
-  const customerEmail = customer?.customerEmail || '';
+  const customerId = req.query.logged_in_customer_id;
+  const customerEmail = req.query.customer_email || '';
   if (!customerId) return res.status(401).json({ error: 'Du skal være logget ind' });
   const { title, description, price, condition, category, brand } = req.body;
   if (!title || !price || !description) return res.status(400).json({ error: 'Udfyld alle felter' });
@@ -267,8 +173,7 @@ app.post(['/api/list', '/apps/marketplace/api/list'], upload.array('images', 5),
 });
 
 app.delete(['/api/listing/:id', '/apps/marketplace/api/listing/:id'], async (req, res) => {
-  const customer = await resolveCustomer(req);
-  const customerId = customer?.customerId;
+  const customerId = req.query.logged_in_customer_id;
   if (!customerId) return res.status(401).json({ error: 'Ikke logget ind' });
   const product = await shopifyREST(`/products/${req.params.id}.json`);
   if (!product.product?.tags?.includes(`seller_${customerId}`)) return res.status(403).json({ error: 'Ikke din annonce' });

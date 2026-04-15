@@ -36,9 +36,6 @@ En app der lader dine kunder sætte brugt babytøj til salg direkte igennem dere
    - `write_inventory`
    - `read_customers`
 4. Klik **Install app** og kopiér **Admin API access token** (vises kun én gang!)
-5. Gå til **Sales channels → Headless** (eller opret en ny Headless-kanal)
-6. Under **Storefront API**, kopiér din **Storefront API access token**
-7. Sørg for at tokenet har adgang til: `unauthenticated_read_customers`, `unauthenticated_write_customers`
 
 ---
 
@@ -53,7 +50,6 @@ En app der lader dine kunder sætte brugt babytøj til salg direkte igennem dere
 SHOPIFY_STORE_DOMAIN    =  din-butik.myshopify.com
 SHOPIFY_ADMIN_TOKEN     =  shpat_... (fra trin 2)
 SHOPIFY_API_SECRET      =  ... (fra trin 1, API secret key)
-SHOPIFY_STOREFRONT_TOKEN=  ... (fra trin 2, Storefront API access token)
 ADMIN_PASSWORD          =  vælg-en-sikker-adgangskode
 PORT                    =  3000
 ```

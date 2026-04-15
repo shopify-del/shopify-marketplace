@@ -95,24 +95,14 @@
 </head>
 <body>
 <div class="container">
+  <div style="text-align:center; margin-bottom:1.5rem;">
+    <img src="/MamaMilla_Logo.avif" alt="MamaMilla" style="max-width:320px; width:100%; height:auto; image-rendering:high-quality;" />
+  </div>
+
   <div id="not-logged-in" class="not-logged-in" style="display:none;">
     <h2>Log ind for at sælge</h2>
     <p>Du skal være logget ind på din konto for at sætte ting til salg.</p>
-    <div class="card" style="text-align:left; margin-top:1.5rem;">
-      <div id="login-alert"></div>
-      <div class="field">
-        <label>Email</label>
-        <input type="text" id="login-email" placeholder="din@email.dk" />
-      </div>
-      <div class="field">
-        <label>Adgangskode</label>
-        <input type="password" id="login-password" placeholder="Din adgangskode" onkeydown="if(event.key==='Enter')doLogin()" />
-      </div>
-      <button class="btn-primary" id="login-btn" onclick="doLogin()">Log ind</button>
-      <p style="font-size:12px; color:var(--text-muted); margin-top:12px; text-align:center;">
-        Har du ikke en konto? <a href="/account/register" style="color:var(--pink);">Opret konto</a>
-      </p>
-    </div>
+    <a href="/account/login?return_url=/apps/marketplace" class="login-btn">Log ind</a>
   </div>
 
   <div id="app" style="display:none;">
@@ -121,7 +111,6 @@
         <h1>Sæt <em>brugt tøj</em> til salg</h1>
         <p class="subtitle">Del dine babyting med andre forældre — køb og betaling kører sikkert igennem butikken.</p>
       </div>
-      <button onclick="doLogout()" style="background:none; border:1px solid var(--border); border-radius:8px; padding:6px 14px; font-size:12px; color:var(--text-muted); cursor:pointer; font-family:'DM Sans',sans-serif; white-space:nowrap; margin-top:6px;">Log ud</button>
     </div>
 
     <div class="tabs">
@@ -203,90 +192,14 @@
 </div>
 
 <script>
+  const customerId = window.SHOPIFY_CUSTOMER_ID || '';
   const proxyBase = '/apps/marketplace';
   let condition = 'god';
-  let customerId = window.SHOPIFY_CUSTOMER_ID || '';
-  let customerEmail = window.SHOPIFY_CUSTOMER_EMAIL || '';
-  let customerAccessToken = '';
 
-  // Restore session from sessionStorage
-  const savedSession = sessionStorage.getItem('mp_session');
-  if (savedSession) {
-    try {
-      const s = JSON.parse(savedSession);
-      customerId = s.customerId || customerId;
-      customerEmail = s.email || customerEmail;
-      customerAccessToken = s.customerAccessToken || '';
-    } catch {}
-  }
-
-  function showApp() {
-    document.getElementById('not-logged-in').style.display = 'none';
-    document.getElementById('app').style.display = 'block';
-  }
-
-  function showLogin() {
+  if (!customerId) {
     document.getElementById('not-logged-in').style.display = 'block';
-    document.getElementById('app').style.display = 'none';
-  }
-
-  async function doLogin() {
-    const email = document.getElementById('login-email').value.trim();
-    const password = document.getElementById('login-password').value;
-    if (!email || !password) return showLoginAlert('Udfyld email og adgangskode.', 'error');
-
-    const btn = document.getElementById('login-btn');
-    btn.disabled = true;
-    btn.textContent = 'Logger ind...';
-
-    try {
-      const res = await fetch(`${proxyBase}/api/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
-      });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        showLoginAlert(data.error || 'Login fejlede.', 'error');
-        btn.disabled = false;
-        btn.textContent = 'Log ind';
-        return;
-      }
-
-      customerId = data.customerId;
-      customerEmail = data.email;
-      customerAccessToken = data.customerAccessToken;
-      sessionStorage.setItem('mp_session', JSON.stringify({ customerId, email: customerEmail, customerAccessToken }));
-      showApp();
-    } catch {
-      showLoginAlert('Serverfejl — prøv igen.', 'error');
-      btn.disabled = false;
-      btn.textContent = 'Log ind';
-    }
-  }
-
-  function doLogout() {
-    customerId = '';
-    customerEmail = '';
-    customerAccessToken = '';
-    sessionStorage.removeItem('mp_session');
-    showLogin();
-  }
-
-  function showLoginAlert(msg, type) {
-    document.getElementById('login-alert').innerHTML = `<div class="alert alert-${type}" style="margin-bottom:1rem;">${msg}</div>`;
-  }
-
-  function authHeaders() {
-    const h = {};
-    if (customerAccessToken) h['x-customer-token'] = customerAccessToken;
-    return h;
-  }
-
-  if (customerId) {
-    showApp();
   } else {
-    showLogin();
+    document.getElementById('app').style.display = 'block';
   }
 
   // Load vendor suggestions
@@ -367,7 +280,7 @@
     try {
       const res = await fetch(`${proxyBase}/api/list${window.location.search}`, {
         method: 'POST',
-        headers: authHeaders(),
+
         body: formData
       });
       const data = await res.json();
@@ -396,7 +309,7 @@
     container.innerHTML = '<div class="empty">Indlæser...</div>';
 
     try {
-      const res = await fetch(`${proxyBase}/api/mine${window.location.search}`, { headers: authHeaders() });
+      const res = await fetch(`${proxyBase}/api/mine${window.location.search}`);
       const data = await res.json();
 
       if (!data.listings?.length) {
@@ -429,7 +342,7 @@
     btn.disabled = true;
     btn.textContent = 'Sletter...';
     try {
-      const res = await fetch(`${proxyBase}/api/listing/${id}${window.location.search}`, { method: 'DELETE', headers: authHeaders() });
+      const res = await fetch(`${proxyBase}/api/listing/${id}${window.location.search}`, { method: 'DELETE' });
       const data = await res.json();
       if (data.success) loadListings();
       else alert(data.error);
