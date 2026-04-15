@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Marketplace Admin</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --card: #ffffff;
+    --text: #1a1a1a;
+    --muted: #6b7280;
+    --light: #d1d5db;
+    --border: #e5e7eb;
+    --green: #059669;
+    --green-bg: #d1fae5;
+    --red: #dc2626;
+    --red-bg: #fee2e2;
+    --amber: #d97706;
+    --amber-bg: #fef3c7;
+    --blue: #2563eb;
+    --blue-bg: #dbeafe;
+    --pink: #d4537e;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'DM Sans', sans-serif; background: var(--bg); color: var(--text); }
+
+  .topbar { background: var(--card); border-bottom: 1px solid var(--border); padding: 0 2rem; height: 56px; display: flex; align-items: center; justify-content: space-between; }
+  .topbar h1 { font-size: 16px; font-weight: 500; }
+  .topbar .badge { background: var(--amber-bg); color: var(--amber); font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 100px; }
+
+  .main { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem; }
+
+  .login-screen { max-width: 360px; margin: 10vh auto; background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 2rem; text-align: center; }
+  .login-screen h2 { font-size: 18px; font-weight: 500; margin-bottom: 1.5rem; }
+  .login-screen input { width: 100%; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: 'DM Sans', sans-serif; outline: none; margin-bottom: 12px; }
+  .login-screen button { width: 100%; padding: 11px; background: var(--text); color: #fff; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; font-family: 'DM Sans', sans-serif; }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 2rem; }
+  .stat { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.25rem; }
+  .stat .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .stat .value { font-size: 24px; font-weight: 500; }
+
+  .section-title { font-size: 13px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); margin-bottom: 1rem; }
+
+  .listing { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 1.25rem; margin-bottom: 12px; }
+  .listing-header { display: flex; gap: 14px; align-items: flex-start; margin-bottom: 12px; }
+  .listing-imgs { display: flex; gap: 6px; flex-shrink: 0; }
+  .listing-imgs img { width: 72px; height: 72px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
+  .listing-imgs .no-img { width: 72px; height: 72px; background: var(--bg); border-radius: 8px; border: 1px solid var(--border); display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--muted); }
+  .listing-meta h3 { font-size: 16px; font-weight: 500; margin-bottom: 4px; }
+  .listing-meta .price { font-size: 18px; font-weight: 500; color: var(--pink); }
+  .listing-meta .meta-row { font-size: 13px; color: var(--muted); margin-top: 4px; }
+  .listing-desc { font-size: 13px; color: var(--muted); line-height: 1.5; margin-bottom: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+  .listing-desc strong { color: var(--text); }
+  .actions { display: flex; gap: 10px; }
+  .btn-approve { padding: 9px 20px; background: var(--green); color: #fff; border: none; border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: opacity 0.15s; }
+  .btn-approve:hover { opacity: 0.85; }
+  .btn-reject { padding: 9px 20px; background: transparent; border: 1px solid var(--red); color: var(--red); border-radius: 8px; font-size: 13px; font-weight: 500; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: all 0.15s; }
+  .btn-reject:hover { background: var(--red-bg); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 100px; font-size: 11px; font-weight: 500; }
+  .tag-amber { background: var(--amber-bg); color: var(--amber); }
+  .tag-blue { background: var(--blue-bg); color: var(--blue); }
+
+  .toast { position: fixed; bottom: 2rem; right: 2rem; padding: 12px 20px; border-radius: 10px; font-size: 14px; font-weight: 500; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 999; }
+  .toast.show { opacity: 1; }
+  .toast-success { background: var(--green-bg); color: var(--green); }
+  .toast-error { background: var(--red-bg); color: var(--red); }
+
+  .empty { text-align: center; padding: 3rem; color: var(--muted); font-size: 14px; }
+  .spinner { text-align: center; padding: 2rem; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<div id="login-screen" class="login-screen">
+  <h2>Marketplace admin</h2>
+  <input type="password" id="pass-input" placeholder="Adgangskode" onkeydown="if(event.key==='Enter')login()" />
+  <button onclick="login()">Log ind</button>
+  <div id="login-err" style="color:#dc2626;font-size:13px;margin-top:10px;"></div>
+</div>
+
+<div id="admin-app" style="display:none;">
+  <div class="topbar">
+    <h1>Marketplace — Godkendelser</h1>
+    <span class="badge" id="pending-count">0 afventer</span>
+  </div>
+
+  <div class="main">
+    <div class="stats" id="stats-row">
+      <div class="stat"><div class="label">Afventer</div><div class="value" id="stat-pending">–</div></div>
+      <div class="stat"><div class="label">Aktive opslag</div><div class="value" id="stat-active">–</div></div>
+    </div>
+
+    <div class="section-title">Afventer godkendelse</div>
+    <div id="listings-area"><div class="spinner">Indlæser...</div></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  let authHeader = '';
+
+  function login() {
+    const pass = document.getElementById('pass-input').value;
+    authHeader = 'Basic ' + btoa(':' + pass);
+    fetch('/admin/marketplace/api/pending', { headers: { Authorization: authHeader } })
+      .then(r => {
+        if (r.status === 401) throw new Error('Forkert adgangskode');
+        return r.json();
+      })
+      .then(data => {
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('admin-app').style.display = 'block';
+        renderListings(data.listings);
+        document.getElementById('stat-pending').textContent = data.listings.length;
+        document.getElementById('pending-count').textContent = `${data.listings.length} afventer`;
+      })
+      .catch(err => {
+        document.getElementById('login-err').textContent = err.message;
+      });
+  }
+
+  function renderListings(listings) {
+    const area = document.getElementById('listings-area');
+    if (!listings.length) {
+      area.innerHTML = '<div class="empty">Ingen opslag afventer godkendelse.</div>';
+      return;
+    }
+    area.innerHTML = listings.map(l => `
+      <div class="listing" id="listing-${l.id}">
+        <div class="listing-header">
+          <div class="listing-imgs">
+            ${l.images?.length
+              ? l.images.slice(0,2).map(u => `<img src="${u}" onerror="this.style.display='none'" />`).join('')
+              : '<div class="no-img">Intet billede</div>'}
+          </div>
+          <div class="listing-meta" style="flex:1;">
+            <h3>${l.title}</h3>
+            <div class="price">${parseFloat(l.price).toFixed(0)} kr.</div>
+            <div class="meta-row">
+              <span class="tag tag-blue">${l.condition || '–'}</span>
+              &nbsp;· Sælger: <strong>${l.sellerEmail || l.sellerId}</strong>
+              &nbsp;· ${new Date(l.createdAt).toLocaleDateString('da-DK', { day:'numeric', month:'long' })}
+            </div>
+          </div>
+        </div>
+        <div class="listing-desc">${l.description || ''}</div>
+        <div class="actions">
+          <button class="btn-approve" onclick="approve('${l.id}', this)">Godkend og publicer</button>
+          <button class="btn-reject" onclick="reject('${l.id}', this)">Afvis</button>
+        </div>
+      </div>`).join('');
+  }
+
+  async function approve(id, btn) {
+    btn.disabled = true;
+    btn.textContent = 'Godkender...';
+    try {
+      const res = await fetch(`/admin/marketplace/api/approve/${id}`, {
+        method: 'POST',
+        headers: { Authorization: authHeader }
+      });
+      const data = await res.json();
+      if (data.success) {
+        document.getElementById('listing-' + id).remove();
+        showToast('Produkt publiceret og tilføjet til "Brugt & Genbrugt"', 'success');
+        updateCount(-1);
+      } else {
+        showToast(data.error, 'error');
+        btn.disabled = false;
+        btn.textContent = 'Godkend og publicer';
+      }
+    } catch {
+      showToast('Fejl — prøv igen', 'error');
+      btn.disabled = false;
+    }
+  }
+
+  async function reject(id, btn) {
+    if (!confirm('Er du sikker på, at du vil afvise og slette dette opslag?')) return;
+    btn.disabled = true;
+    btn.textContent = 'Afviser...';
+    try {
+      const res = await fetch(`/admin/marketplace/api/reject/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: authHeader }
+      });
+      const data = await res.json();
+      if (data.success) {
+        document.getElementById('listing-' + id).remove();
+        showToast('Opslag afvist og slettet', 'success');
+        updateCount(-1);
+      } else {
+        showToast(data.error, 'error');
+        btn.disabled = false;
+      }
+    } catch {
+      showToast('Fejl — prøv igen', 'error');
+      btn.disabled = false;
+    }
+  }
+
+  function updateCount(delta) {
+    const el = document.getElementById('stat-pending');
+    const badge = document.getElementById('pending-count');
+    const n = Math.max(0, parseInt(el.textContent) + delta);
+    el.textContent = n;
+    badge.textContent = `${n} afventer`;
+  }
+
+  function showToast(msg, type = 'success') {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = `toast toast-${type} show`;
+    setTimeout(() => t.className = `toast toast-${type}`, 3000);
+  }
+</script>
+</body>
+</html>
