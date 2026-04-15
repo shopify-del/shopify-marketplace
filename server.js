@@ -20,84 +20,53 @@ const {
   PORT = 3000
 } = process.env;
 
-// SHOPIFY_API_SECRET bruges til proxy-verifikation — sæt den til samme værdi som SHOPIFY_CLIENT_SECRET
 const SHOPIFY_API_SECRET = SHOPIFY_CLIENT_SECRET;
-
 const SHOPIFY_API_VERSION = '2024-01';
 const COLLECTION_TITLE = 'Brugt & Genbrugt';
-
-// ─── OAuth token cache ───────────────────────────────────────────────────────
-// Tokens udløber efter 24 timer — vi cacher og fornyer automatisk
 
 let cachedToken = null;
 let tokenExpiresAt = 0;
 
 async function getAccessToken() {
   const now = Date.now();
-  if (cachedToken && now < tokenExpiresAt - 60000) {
-    return cachedToken;
-  }
+  if (cachedToken && now < tokenExpiresAt - 60000) return cachedToken;
 
-  const res = await fetch(
-    `https://${SHOPIFY_STORE_DOMAIN}/admin/oauth/access_token`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: SHOPIFY_CLIENT_ID,
-        client_secret: SHOPIFY_CLIENT_SECRET
-      })
-    }
-  );
+  const res = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: SHOPIFY_CLIENT_ID,
+      client_secret: SHOPIFY_CLIENT_SECRET
+    })
+  });
 
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Token fejl: ${res.status} — ${err}`);
-  }
-
+  if (!res.ok) throw new Error(`Token fejl: ${res.status} — ${await res.text()}`);
   const data = await res.json();
   cachedToken = data.access_token;
   tokenExpiresAt = now + (data.expires_in || 86400) * 1000;
-  console.log('Nyt Shopify access token hentet');
   return cachedToken;
 }
 
-// ─── Shopify Admin API helper ────────────────────────────────────────────────
-
 async function shopifyAdmin(query, variables = {}) {
   const token = await getAccessToken();
-  const res = await fetch(
-    `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': token
-      },
-      body: JSON.stringify({ query, variables })
-    }
-  );
+  const res = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+    body: JSON.stringify({ query, variables })
+  });
   return res.json();
 }
 
 async function shopifyREST(endpoint, method = 'GET', body = null) {
   const token = await getAccessToken();
-  const res = await fetch(
-    `https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}${endpoint}`,
-    {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Shopify-Access-Token': token
-      },
-      body: body ? JSON.stringify(body) : null
-    }
-  );
+  const res = await fetch(`https://${SHOPIFY_STORE_DOMAIN}/admin/api/${SHOPIFY_API_VERSION}${endpoint}`, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-Shopify-Access-Token': token },
+    body: body ? JSON.stringify(body) : null
+  });
   return res.json();
 }
-
-// ─── Verify Shopify App Proxy signature ─────────────────────────────────────
 
 function verifyProxySignature(query) {
   const { signature, ...rest } = query;
@@ -107,19 +76,15 @@ function verifyProxySignature(query) {
   return hash === signature;
 }
 
-// ─── Get or create "Brugt & Genbrugt" collection ────────────────────────────
-
 let cachedCollectionId = null;
 
 async function getOrCreateCollection() {
   if (cachedCollectionId) return cachedCollectionId;
-
   const data = await shopifyREST('/custom_collections.json?title=Brugt+%26+Genbrugt');
   if (data.custom_collections?.length > 0) {
     cachedCollectionId = data.custom_collections[0].id;
     return cachedCollectionId;
   }
-
   const created = await shopifyREST('/custom_collections.json', 'POST', {
     custom_collection: {
       title: COLLECTION_TITLE,
@@ -131,41 +96,24 @@ async function getOrCreateCollection() {
   return cachedCollectionId;
 }
 
-// ─── Add product to collection ───────────────────────────────────────────────
-
 async function addToCollection(productId, collectionId) {
-  await shopifyREST('/collects.json', 'POST', {
-    collect: { product_id: productId, collection_id: collectionId }
-  });
+  await shopifyREST('/collects.json', 'POST', { collect: { product_id: productId, collection_id: collectionId } });
 }
-
-// ─── Upload image to Shopify product ────────────────────────────────────────
 
 async function attachImageToProduct(productId, base64Data, filename) {
   const mimeType = filename.match(/\.(png)$/i) ? 'image/png' : 'image/jpeg';
   await shopifyREST(`/products/${productId}/images.json`, 'POST', {
-    image: {
-      attachment: base64Data.replace(/^data:image\/\w+;base64,/, ''),
-      filename,
-      content_type: mimeType
-    }
+    image: { attachment: base64Data.replace(/^data:image\/\w+;base64,/, ''), filename, content_type: mimeType }
   });
 }
 
-// ─── PROXY ROUTES (/apps/marketplace) ───────────────────────────────────────
+// ─── KUNDE ROUTES ────────────────────────────────────────────────────────────
 
-// Serve customer marketplace UI
-app.get('/apps/marketplace', (req, res) => {
-  if (!verifyProxySignature(req.query)) {
-    return res.status(403).send('Ugyldig signatur');
-  }
+app.get(['/', '/apps/marketplace', '/apps/marketplace/'], (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'marketplace.html'));
 });
 
-// Get customer's own listings
-app.get('/apps/marketplace/api/mine', async (req, res) => {
-  if (!verifyProxySignature(req.query)) return res.status(403).json({ error: 'Forbudt' });
-
+app.get(['/api/mine', '/apps/marketplace/api/mine'], async (req, res) => {
   const customerId = req.query.logged_in_customer_id;
   if (!customerId) return res.json({ listings: [] });
 
@@ -174,11 +122,7 @@ app.get('/apps/marketplace/api/mine', async (req, res) => {
       products(first: 50, query: $query) {
         edges {
           node {
-            id
-            title
-            status
-            descriptionHtml
-            createdAt
+            id title status descriptionHtml createdAt
             images(first: 1) { edges { node { url } } }
             variants(first: 1) { edges { node { price } } }
             metafield(namespace: "marketplace", key: "seller_id") { value }
@@ -189,9 +133,7 @@ app.get('/apps/marketplace/api/mine', async (req, res) => {
   `, { query: `tag:seller_${customerId}` });
 
   const listings = data.data?.products?.edges?.map(({ node }) => ({
-    id: node.id,
-    title: node.title,
-    status: node.status,
+    id: node.id, title: node.title, status: node.status,
     description: node.descriptionHtml,
     price: node.variants?.edges[0]?.node?.price,
     image: node.images?.edges[0]?.node?.url,
@@ -201,42 +143,24 @@ app.get('/apps/marketplace/api/mine', async (req, res) => {
   res.json({ listings });
 });
 
-// Submit new listing
-app.post('/apps/marketplace/api/list', upload.array('images', 5), async (req, res) => {
-  if (!verifyProxySignature(req.query)) return res.status(403).json({ error: 'Forbudt' });
-
+app.post(['/api/list', '/apps/marketplace/api/list'], upload.array('images', 5), async (req, res) => {
   const customerId = req.query.logged_in_customer_id;
   const customerEmail = req.query.customer_email || '';
   if (!customerId) return res.status(401).json({ error: 'Du skal være logget ind' });
 
   const { title, description, price, condition, category } = req.body;
+  if (!title || !price || !description) return res.status(400).json({ error: 'Udfyld alle felter' });
 
-  if (!title || !price || !description) {
-    return res.status(400).json({ error: 'Udfyld alle felter' });
-  }
-
-  const conditionLabel = {
-    ny: 'Ny med mærke',
-    god: 'God stand',
-    brugt: 'Let brugt',
-    slidt: 'Slidt'
-  }[condition] || condition;
+  const conditionLabel = { ny: 'Ny med mærke', god: 'God stand', brugt: 'Let brugt', slidt: 'Slidt' }[condition] || condition;
 
   try {
     const productData = await shopifyREST('/products.json', 'POST', {
       product: {
         title,
         body_html: `<p>${description}</p><p><strong>Stand:</strong> ${conditionLabel}</p><p><strong>Kategori:</strong> ${category || 'Andet'}</p>`,
-        vendor: 'Marketplace',
-        product_type: category || 'Babytøj',
-        status: 'draft',
+        vendor: 'Marketplace', product_type: category || 'Babytøj', status: 'draft',
         tags: [`seller_${customerId}`, `seller_email_${customerEmail}`, 'marketplace', condition, category],
-        variants: [{
-          price: parseFloat(price).toFixed(2),
-          inventory_management: 'shopify',
-          inventory_quantity: 1,
-          fulfillment_service: 'manual'
-        }],
+        variants: [{ price: parseFloat(price).toFixed(2), inventory_management: 'shopify', inventory_quantity: 1, fulfillment_service: 'manual' }],
         metafields: [
           { namespace: 'marketplace', key: 'seller_id', value: customerId, type: 'single_line_text_field' },
           { namespace: 'marketplace', key: 'seller_email', value: customerEmail, type: 'single_line_text_field' },
@@ -249,76 +173,50 @@ app.post('/apps/marketplace/api/list', upload.array('images', 5), async (req, re
     const productId = productData.product?.id;
     if (!productId) throw new Error('Produkt ikke oprettet');
 
-    // Attach images if any
     if (req.files?.length) {
       for (const file of req.files) {
-        const b64 = file.buffer.toString('base64');
-        await attachImageToProduct(productId, b64, file.originalname);
+        await attachImageToProduct(productId, file.buffer.toString('base64'), file.originalname);
       }
     }
 
     res.json({ success: true, message: 'Dit opslag er sendt til godkendelse. Vi vender tilbage snarest!' });
-
   } catch (err) {
     console.error('Opret produkt fejl:', err);
     res.status(500).json({ error: 'Noget gik galt. Prøv igen.' });
   }
 });
 
-// Delete own listing
-app.delete('/apps/marketplace/api/listing/:id', async (req, res) => {
-  if (!verifyProxySignature(req.query)) return res.status(403).json({ error: 'Forbudt' });
-
+app.delete(['/api/listing/:id', '/apps/marketplace/api/listing/:id'], async (req, res) => {
   const customerId = req.query.logged_in_customer_id;
   if (!customerId) return res.status(401).json({ error: 'Ikke logget ind' });
-
-  const numericId = req.params.id;
-
-  // Verify ownership via tag
-  const product = await shopifyREST(`/products/${numericId}.json`);
-  const tags = product.product?.tags || '';
-  if (!tags.includes(`seller_${customerId}`)) {
-    return res.status(403).json({ error: 'Ikke din annonce' });
-  }
-
-  if (product.product?.status === 'active') {
-    return res.status(400).json({ error: 'Kan ikke slette et aktivt opslag — kontakt os' });
-  }
-
-  await shopifyREST(`/products/${numericId}.json`, 'DELETE');
+  const product = await shopifyREST(`/products/${req.params.id}.json`);
+  if (!product.product?.tags?.includes(`seller_${customerId}`)) return res.status(403).json({ error: 'Ikke din annonce' });
+  if (product.product?.status === 'active') return res.status(400).json({ error: 'Kan ikke slette et aktivt opslag — kontakt os' });
+  await shopifyREST(`/products/${req.params.id}.json`, 'DELETE');
   res.json({ success: true });
 });
 
-// ─── ADMIN ROUTES (/admin/marketplace) ──────────────────────────────────────
+// ─── ADMIN ROUTES ────────────────────────────────────────────────────────────
 
 function adminAuth(req, res, next) {
   const auth = req.headers.authorization;
   if (!auth) return res.status(401).json({ error: 'Ikke autoriseret' });
   const [, pass] = auth.split(' ');
-  if (Buffer.from(pass, 'base64').toString() !== `:${ADMIN_PASSWORD}`) {
-    return res.status(401).json({ error: 'Forkert adgangskode' });
-  }
+  if (Buffer.from(pass, 'base64').toString() !== `:${ADMIN_PASSWORD}`) return res.status(401).json({ error: 'Forkert adgangskode' });
   next();
 }
 
-// Serve admin UI
 app.get('/admin/marketplace', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// Get all pending listings
 app.get('/admin/marketplace/api/pending', adminAuth, async (req, res) => {
   const data = await shopifyAdmin(`
     query {
       products(first: 50, query: "tag:marketplace status:draft") {
         edges {
           node {
-            id
-            title
-            status
-            descriptionHtml
-            createdAt
-            tags
+            id title status descriptionHtml createdAt tags
             images(first: 3) { edges { node { url } } }
             variants(first: 1) { edges { node { price } } }
             sellerEmail: metafield(namespace: "marketplace", key: "seller_email") { value }
@@ -331,55 +229,35 @@ app.get('/admin/marketplace/api/pending', adminAuth, async (req, res) => {
   `);
 
   const listings = data.data?.products?.edges?.map(({ node }) => ({
-    gid: node.id,
-    id: node.id.replace('gid://shopify/Product/', ''),
-    title: node.title,
-    description: node.descriptionHtml,
+    gid: node.id, id: node.id.replace('gid://shopify/Product/', ''),
+    title: node.title, description: node.descriptionHtml,
     price: node.variants?.edges[0]?.node?.price,
     images: node.images?.edges?.map(e => e.node.url),
-    sellerEmail: node.sellerEmail?.value,
-    sellerId: node.sellerId?.value,
-    condition: node.condition?.value,
-    createdAt: node.createdAt
+    sellerEmail: node.sellerEmail?.value, sellerId: node.sellerId?.value,
+    condition: node.condition?.value, createdAt: node.createdAt
   })) || [];
 
   res.json({ listings });
 });
 
-// Approve listing → publish + add to collection
 app.post('/admin/marketplace/api/approve/:id', adminAuth, async (req, res) => {
-  const id = req.params.id;
-
   try {
-    // Publish the product
-    await shopifyREST(`/products/${id}.json`, 'PUT', {
-      product: { id, status: 'active' }
-    });
-
-    // Add to "Brugt & Genbrugt" collection
+    await shopifyREST(`/products/${req.params.id}.json`, 'PUT', { product: { id: req.params.id, status: 'active' } });
     const collectionId = await getOrCreateCollection();
-    await addToCollection(id, collectionId);
-
+    await addToCollection(req.params.id, collectionId);
     res.json({ success: true, message: 'Produkt godkendt og publiceret' });
   } catch (err) {
-    console.error('Godkend fejl:', err);
     res.status(500).json({ error: 'Godkendelse fejlede' });
   }
 });
 
-// Reject listing → delete
 app.delete('/admin/marketplace/api/reject/:id', adminAuth, async (req, res) => {
-  const id = req.params.id;
   try {
-    await shopifyREST(`/products/${id}.json`, 'DELETE');
+    await shopifyREST(`/products/${req.params.id}.json`, 'DELETE');
     res.json({ success: true, message: 'Opslag afvist og slettet' });
   } catch (err) {
     res.status(500).json({ error: 'Afvisning fejlede' });
   }
 });
 
-// ─── Start server ────────────────────────────────────────────────────────────
-
-app.listen(PORT, () => {
-  console.log(`Marketplace server kører på port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Marketplace server kører på port ${PORT}`));
